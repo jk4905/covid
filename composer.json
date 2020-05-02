@@ -20,7 +20,6 @@
         "rap2hpoutre/laravel-log-viewer": "^1.4"
     },
     "require-dev": {
-        "barryvdh/laravel-ide-helper": "^2.6",
         "doctrine/dbal": "^2.10",
         "facade/ignition": "^2.0",
         "fzaninotto/faker": "^1.9.1",
