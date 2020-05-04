@@ -27,13 +27,17 @@ class CovidController extends BaseController
         if (true) {
             $provinceList = CovidData::query()->where('country_code', $params['country_code'])->where('date', $params['date'])->where('province_code', '!=', '')->where('city', '')->orderByDesc('confirmed')->get();
             $data = [
-                'list'            => [],
-                'total_confirmed' => 0,
-                'total_cured'     => 0,
-                'total_dead'      => 0,
-                'delta_confirmed' => 0,
-                'delta_cured'     => 0,
-                'delta_dead'      => 0
+                'list'               => [],
+                'total_confirmed'    => 0,
+                'total_cured'        => 0,
+                'total_dead'         => 0,
+                'increase_confirmed' => 0,
+                'increase_dead'      => 0,
+                'increase_cured'     => 0,
+                'delta_confirmed'    => 0,
+                'delta_cured'        => 0,
+                'delta_dead'         => 0,
+                'major_cities'       => [],
             ];
             if (!empty($provinceList->toArray())) {
                 $provinceCodeArr = array_column($provinceList->toArray(), "province_code");
@@ -72,15 +76,17 @@ class CovidController extends BaseController
                 ];
             }
 
-            $yesterday = CovidData::query()->where('country_code', $params['country_code'])->where('date', date('Y-m-d', strtotime($params['date'] . ' -1 day')))->where('province_code', '')->where('city', '')->first();
-
-            $theDayBeforeYesterday = CovidData::query()->where('country_code', $params['country_code'])->where('date', date('Y-m-d', strtotime($params['date'] . ' -2 days')))->where('province_code', '')->where('city', '')->first();
+            $yesterday = CovidData::query()->where('country_code', $params['country_code'])->where('date', date('Y-m-d', strtotime($params['date'] . ' -1 day')))->where('province_code', '')->where('city', '')->select(\DB::raw('sum(confirmed) confirmed, sum(cured) cured, sum(dead) dead'))->first();
+            $theDayBeforeYesterday = CovidData::query()->where('country_code', $params['country_code'])->where('date', date('Y-m-d', strtotime($params['date'] . ' -2 days')))->where('province_code', '')->where('city', '')->select(\DB::raw('sum(confirmed) confirmed, sum(cured) cured, sum(dead) dead'))->first();
 
 //        变化量
             if (!empty($yesterday) && !empty($theDayBeforeYesterday)) {
                 $data['delta_confirmed'] = ($data['total_confirmed'] - $yesterday->confirmed) - ($yesterday->confirmed - $theDayBeforeYesterday->confirmed);
                 $data['delta_cured'] = ($data['total_cured'] - $yesterday->cured) - ($yesterday->cured - $theDayBeforeYesterday->cured);
                 $data['delta_dead'] = ($data['total_dead'] - $yesterday->dead) - ($yesterday->dead - $theDayBeforeYesterday->dead);
+                $data['increase_confirmed'] = $data['total_confirmed'] - $yesterday->confirmed;
+                $data['increase_cured'] = $data['total_cured'] - $yesterday->cured;
+                $data['increase_dead'] = $data['total_dead'] - $yesterday->dead;
             }
 
             $data['major_cities'] = [];
@@ -92,12 +98,27 @@ class CovidController extends BaseController
                     $queryItem->whereIn('code', ['440100', '440300', '510100', '330100', '420100', '320100', '210100']);
                 });
             })->get();
+            $majorCitiesYesterday = CovidData::query()->where('date', date('Y-m-d', strtotime($params['date'] . ' -1 day')))->where(function ($query) {
+                $query->where(function ($queryItem) {
+                    $queryItem->whereIn('province_code', ['310000', '110000', '120000'])->where('city', '');
+                })->orWhere(function ($queryItem) {
+                    $queryItem->whereIn('code', ['440100', '440300', '510100', '330100', '420100', '320100', '210100']);
+                });
+            })->get();
             if (!empty($majorCities)) {
                 foreach ($majorCities as $majorCity) {
-                    $data['major_cities'][] = [
-                        'city'      => empty($majorCity['city']) ? $majorCity['province'] : $majorCity['city'],
-                        'predicted' => $majorCity['predicted']
+//                    预测值
+                    $dataItem = [
+                        'city' => empty($majorCity['city']) ? $majorCity['province'] : $majorCity['city'],
+                        'risk' => $majorCity['risk']
                     ];
+                    foreach ($majorCitiesYesterday as $majorCitiesYesterdayItem) {
+                        if ($majorCitiesYesterdayItem['province_code'] == $majorCity['province_code'] && $majorCitiesYesterdayItem['code'] == $majorCity['code']) {
+                            $dataItem['delta_confirmed'] = $majorCity['confirmed'] - $majorCitiesYesterdayItem['confirmed'];
+                            $dataItem['delta_predicted'] = $majorCity['predicted'] - $majorCitiesYesterdayItem['predicted'];
+                        }
+                    }
+                    $data['major_cities'][] = $dataItem;
                 }
             }
             $redis->set($key, json_encode($data));
@@ -121,14 +142,23 @@ class CovidController extends BaseController
         if (true) {
             $cityList = CovidData::query()->where('date', $params['date'])->where('province_code', $params['province_code'])->where('city', '!=', '')->orderByDesc('risk')->orderByDesc('confirmed')->get();
 
-            $predictedList = $cityList->sortBy('predicted')->slice(0, 10)->map(function ($item) {
-                return [
-                    'city'      => $item['city'],
-                    'code'      => $item['code'],
-                    'predicted' => $item['predicted'],
-                    'confirmed' => $item['confirmed'],
+            $cityListYesterday = CovidData::query()->where('date', date('Y-m-d', strtotime($params['date'] . ' -1 day')))->where('province_code', $params['province_code'])->where('city', '!=', '')->get();
+            $predictedList = [];
+            foreach ($cityList as $city) {
+                $dataItem = [
+                    'city'            => $city['city'],
+                    'code'            => $city['code'],
+                    'delta_confirmed' => 0,
+                    'delta_predicted' => 0,
                 ];
-            });
+                foreach ($cityListYesterday as $cityListYesterdayItem) {
+                    if ($cityListYesterdayItem['city'] == $city['city'] && $cityListYesterdayItem['code'] == $city['code']) {
+                        $dataItem['delta_confirmed'] = $city['confirmed'] - $cityListYesterdayItem['confirmed'];
+                        $dataItem['delta_predicted'] = $city['predicted'] - $cityListYesterdayItem['predicted'];
+                    }
+                }
+                $predictedList[] = $dataItem;
+            }
 
             $data = [
                 'city_list'      => $cityList,
