@@ -23,8 +23,8 @@ class CovidController extends BaseController
         $redis = Redis::connection('default');
         $key = 'covid_list_data_' . $params['date'];
         $data = $redis->get($key);
-//        if (empty($data)) {
-        if (true) {
+        if (empty($data)) {
+//        if (true) {
             $provinceList = CovidData::query()->where('country_code', $params['country_code'])->where('date', $params['date'])->where('province_code', '!=', '')->where('city', '')->orderByDesc('confirmed')->get();
             $data = [
                 'list'               => [],
@@ -138,8 +138,8 @@ class CovidController extends BaseController
         $redis = Redis::connection('default');
         $key = 'covid_list_city_data_' . $params['province_code'] . $params['date'];
         $data = $redis->get($key);
-//        if (empty($data)) {
-        if (true) {
+        if (empty($data)) {
+//        if (true) {
             $cityList = CovidData::query()->where('date', $params['date'])->where('province_code', $params['province_code'])->where('city', '!=', '')->orderByDesc('risk')->orderByDesc('confirmed')->get();
 
             $cityListYesterday = CovidData::query()->where('date', date('Y-m-d', strtotime($params['date'] . ' -1 day')))->where('province_code', $params['province_code'])->where('city', '!=', '')->get();
